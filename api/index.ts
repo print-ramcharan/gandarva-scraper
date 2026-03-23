@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import { cors } from 'hono/cors';
 
-// Note: Use .ts if using tsx or vercel-node, or omit extension
-import { searchSongs, getSongDetails, getLyrics } from './lib/jiosaavn';
+// Note: In ESM, you must use the .js extension in imports even if the source is .ts
+import { searchSongs, getSongDetails, getLyrics } from './lib/jiosaavn.js';
 
 const app = new Hono();
 
@@ -15,6 +15,7 @@ app.use('*', async (c, next) => {
 app.use('*', cors());
 
 app.get('/', (c) => c.json({ message: 'Gandharva Scraper API is running! 🚀' }));
+app.get('/favicon.ico', (c) => c.text(''));
 
 /**
  * GET /api/search?query=...
