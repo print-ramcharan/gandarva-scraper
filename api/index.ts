@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
-import { searchSongs, getSongDetails, getLyrics } from './lib/jiosaavn.js';
+import { cors } from 'hono/cors';
+
+// Note: Use .ts if using tsx or vercel-node, or omit extension
+import { searchSongs, getSongDetails, getLyrics } from './lib/jiosaavn';
 
 const app = new Hono();
+
+// Enable CORS for all routes
+app.use('*', async (c, next) => {
+  console.log(`Incoming request: ${c.req.method} ${c.req.url}`);
+  await next();
+});
+app.use('*', cors());
 
 app.get('/', (c) => c.json({ message: 'Gandharva Scraper API is running! 🚀' }));
 
@@ -53,9 +63,21 @@ app.get('/lyrics', async (c) => {
 });
 
 // For Vercel deployment
-const handler = handle(app);
+export const runtime = 'nodejs';
+export default handle(app);
 
-export const GET = handler;
-export const POST = handler;
-
-export default handler;
+// Local development server
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  const port = 3000;
+  console.log(`Gandharva Scraper is running on http://localhost:${port}`);
+  
+  // Dynamic import for local server to avoid issues in Vercel bundle
+  import('@hono/node-server').then(({ serve }) => {
+    serve({
+      fetch: app.fetch,
+      port
+    });
+  }).catch(err => {
+    console.error('Failed to start local server:', err);
+  });
+}

@@ -1,7 +1,15 @@
 import axios from 'axios';
-import * as crypto from 'crypto';
+import CryptoJS from 'crypto-js';
 
 const baseUrl = 'https://www.jiosaavn.com/api.php';
+const axiosInstance = axios.create({
+  timeout: 10000,
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+  }
+});
 
 export interface SaavnSong {
   id: string;
@@ -21,11 +29,18 @@ export interface SaavnSong {
  * Decrypts the encrypted media URL from JioSaavn
  */
 export function decryptUrl(encUrl: string): string {
-  const key = '38346591'; // Standard decryption key for JioSaavn
-  const decipher = crypto.createDecipheriv('des-ecb', Buffer.from(key, 'utf8'), null);
-  let decrypted = (decipher as any).update(Buffer.from(encUrl, 'base64'), 'binary', 'utf8');
-  decrypted += (decipher as any).final('utf8');
-  return decrypted.replace('_i.mp4', '_320.mp4').replace('_64.mp4', '_320.mp4');
+  const key = CryptoJS.enc.Utf8.parse('38346591'); // Standard decryption key for JioSaavn
+  const decrypted = CryptoJS.DES.decrypt(
+    encUrl,
+    key,
+    {
+      mode: CryptoJS.mode.ECB,
+      padding: CryptoJS.pad.Pkcs7,
+    }
+  );
+
+  const decryptedUrl = decrypted.toString(CryptoJS.enc.Utf8);
+  return decryptedUrl.replace('_i.mp4', '_320.mp4').replace('_64.mp4', '_320.mp4');
 }
 
 /**
@@ -49,7 +64,7 @@ export async function searchSongs(query: string) {
     query: query,
   };
 
-  const response = await axios.get(baseUrl, { params });
+  const response = await axiosInstance.get(baseUrl, { params });
   const data = response.data as any;
   const songs = data.songs?.data || [];
 
@@ -76,7 +91,7 @@ export async function getSongDetails(id: string) {
     includeMetaTags: '1',
   };
 
-  const response = await axios.get(baseUrl, { params });
+  const response = await axiosInstance.get(baseUrl, { params });
   const song = (response.data as any)[id];
 
   if (!song) return null;
@@ -119,7 +134,7 @@ export async function getLyrics(id: string) {
   };
 
   try {
-    const response = await axios.get(baseUrl, { params });
+    const response = await axiosInstance.get(baseUrl, { params });
     return (response.data as any).lyrics || null;
   } catch (e) {
     return null;
