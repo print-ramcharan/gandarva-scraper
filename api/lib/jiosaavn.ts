@@ -72,9 +72,10 @@ export async function searchSongs(query: string) {
     id: s.id,
     title: s.title,
     artist: s.description,
+    album: s.album || '',
     artwork: formatImage(s.image),
-    album: s.album,
-    type: s.type
+    duration: s.duration || '',
+    source: 'jiosaavn' as const,
   }));
 }
 

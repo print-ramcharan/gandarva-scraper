@@ -4,7 +4,7 @@
   "type": "module",
   "main": "api/index.ts",
   "scripts": {
-    "dev": "tsx watch api/index.ts"
+    "dev": "tsx watch api/app.ts"
   },
   "keywords": [],
   "author": "",
