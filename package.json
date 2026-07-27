@@ -1,31 +1,17 @@
 {
-  "name": "gandharva-scraper",
+  "name": "gandharva-resolver",
   "version": "1.0.0",
-  "type": "module",
-  "main": "api/index.ts",
+  "description": "YouTube audio URL resolver for Gandharva",
+  "main": "server.js",
   "scripts": {
-    "dev": "tsx watch api/app.ts"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "engines": {
-    "node": "20.x"
+    "node": ">=24.0.0"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.11",
-    "axios": "^1.13.6",
-    "crypto-js": "^4.2.0",
-    "hono": "^4.12.9",
-    "zod": "^4.3.6"
-  },
-  "devDependencies": {
-    "@types/axios": "^0.9.36",
-    "@types/crypto-js": "^4.2.2",
-    "@types/node": "^25.5.0",
-    "@vercel/node": "^5.6.18",
-    "ts-node": "^10.9.2",
-    "typescript": "^6.0.2"
+    "express": "^4.21.0",
+    "lru-cache": "^11.1.0"
   }
 }
