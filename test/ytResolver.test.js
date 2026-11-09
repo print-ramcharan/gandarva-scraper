@@ -30,7 +30,7 @@ test('uses Deno, BgUtils PO tokens, fallback player clients, and audio-only extr
   const extractorArgsIndex = commandArgs.indexOf('--extractor-args');
   assert.notEqual(extractorArgsIndex, -1);
   assert.match(commandArgs[extractorArgsIndex + 1], /youtubepot-bgutilhttp:base_url=/);
-  assert.match(commandArgs[extractorArgsIndex + 1], /youtube:player-client=mweb,tv,web_safari/);
+  assert.match(commandArgs[extractorArgsIndex + 1], /youtube:player_client=mweb,tv,web_safari/);
   assert.equal(commandOptions.timeoutMs, 30_000);
   assert.ok(!commandArgs.includes('bestvideo'));
 });
