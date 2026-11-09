@@ -31,16 +31,16 @@ function safeStderr(stderr = '') {
 
 function safePotDiagnostics(stderr = '') {
   const relevant = String(stderr)
-    .split(/\\r?\\n/)
+    .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => (
-      /\\[pot\\] PO Token Providers/i.test(line)
-      || /\\[pot:bgutil(?::[^\\]]+)?\\].*(Generating|Retrieved|Error|provider)/i.test(line)
+      /\[pot\] PO Token Providers/i.test(line)
+      || /\[pot:bgutil(?::[^\]]+)?\].*(Generating|Retrieved|Error|provider)/i.test(line)
       || /Sign in to confirm|confirm you.re not a bot|LOGIN_REQUIRED|HTTP Error 429/i.test(line)
     ))
     .map(line => line
-      .replace(/https?:\\/\\/\\S+/gi, '[url]')
-      .replace(/(?:PO Token|token|cookie|authorization)(?:\\s*[:=]\\s*)[^\\s,;]+/gi, '$1=[redacted]')
+      .replace(/https?:\/\/\S+/gi, '[url]')
+      .replace(/\b(?:PO Token|token|cookie|authorization)\b(?:\s*[:=]\s*)[^\s,;]+/gi, '[credential redacted]')
       .slice(0, 240))
     .slice(0, 8);
   return relevant.join(' | ');
