@@ -1,4 +1,5 @@
 const express = require('express');
+const { spawn } = require('node:child_process');
 const logger = require('./utils/logger');
 const healthRoute = require('./routes/health');
 const resolveRoute = require('./routes/resolve');
@@ -47,9 +48,41 @@ app.use((err, req, res, _next) => {
 // ---------------------------------------------------------------------------
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  const providerEntrypoint = process.env.BGUTIL_PROVIDER_ENTRYPOINT;
+  let potProvider = null;
+
+  if (providerEntrypoint) {
+    const providerHost = process.env.BGUTIL_POT_PROVIDER_HOST || '127.0.0.1';
+    const providerPort = process.env.BGUTIL_POT_PROVIDER_PORT || '4416';
+    potProvider = spawn(
+      process.execPath,
+      [providerEntrypoint, '--host', providerHost, '--port', providerPort],
+      { stdio: 'ignore', env: process.env },
+    );
+
+    potProvider.once('error', error => {
+      logger.error('BgUtils PO token provider failed to start', { error: error.message });
+    });
+    potProvider.once('exit', (code, signal) => {
+      if (code !== 0) {
+        logger.error('BgUtils PO token provider exited', { code, signal });
+      }
+    });
+  }
+
+  const server = app.listen(PORT, () => {
     logger.info(`Gandharva Resolver listening on port ${PORT}`);
   });
+
+  const shutdown = signal => {
+    logger.info('Shutting down resolver', { signal });
+    if (potProvider && !potProvider.killed) potProvider.kill(signal);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = app;
