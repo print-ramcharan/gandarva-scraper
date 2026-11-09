@@ -28,10 +28,12 @@ RUN apt-get update && \
       https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
       /opt/bgutil-ytdlp-pot-provider && \
     cd /opt/bgutil-ytdlp-pot-provider/server && \
-    npm ci && npx tsc && \
+    npm ci && npx tsc && npm prune --omit=dev && \
+    test -f /opt/bgutil-ytdlp-pot-provider/server/build/main.js && \
     /usr/local/bin/deno --version && \
     /opt/yt-dlp-venv/bin/yt-dlp --version && \
-    node /opt/bgutil-ytdlp-pot-provider/server/build/main.js --help >/dev/null 2>&1 || true
+    rm -f /tmp/deno.zip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV YT_DLP_PATH=/opt/yt-dlp-venv/bin/yt-dlp
 ENV YT_DLP_JS_RUNTIME_PATH=/usr/local/bin/deno
