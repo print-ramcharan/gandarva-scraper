@@ -6,8 +6,7 @@ const router = express.Router();
 /**
  * GET /health
  *
- * Render health-check endpoint.  Returns uptime, yt-dlp version, and
- * current cache occupancy.
+ * Render health-check endpoint. Returns process liveness and cache occupancy.
  */
 router.get('/health', async (_req, res) => {
   res.json({

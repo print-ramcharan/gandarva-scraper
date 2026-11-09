@@ -2,7 +2,8 @@ const { execWithTimeout } = require('../utils/timeout');
 const logger = require('../utils/logger');
 
 const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
-const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 10_000, 1_000, 120_000);
+const JS_RUNTIME_PATH = process.env.YT_DLP_JS_RUNTIME_PATH || 'deno';
+const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 20_000, 1_000, 120_000);
 const MAX_OUTPUT_BYTES = clampInt(process.env.YT_DLP_MAX_OUTPUT_BYTES, 1_048_576, 16_384, 8_388_608);
 const MAX_CONCURRENT = clampInt(process.env.YT_DLP_MAX_CONCURRENT, 2, 1, 8);
 const inFlight = new Map();
@@ -44,7 +45,10 @@ function classifyFailure(error) {
   if (/video unavailable|private video|has been removed|this video is unavailable|not available in your country/.test(stderr)) {
     return createResolverError('video_unavailable', 404, 'Video is unavailable');
   }
-  if (/sign in to confirm|bot|captcha|http error 429|too many requests|confirm you.re not a bot/.test(stderr)) {
+  if (/http error 429|status code: 429|too many requests|rate limit|rate-limit/.test(stderr)) {
+    return createResolverError('youtube_rate_limited', 429, 'YouTube rate limited the resolver request');
+  }
+  if (/sign in to confirm|bot|captcha|confirm you.re not a bot/.test(stderr)) {
     return createResolverError('youtube_blocked', 502, 'YouTube blocked the resolver request');
   }
   if (/timed out|timeout|network|connection|temporary failure|unable to download/.test(stderr)) {
@@ -89,7 +93,14 @@ async function resolveOnce(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   // `bestaudio` deliberately has no video fallback. Returning a video URL
   // would violate the Android client's audio-only contract.
-  const args = ['--no-warnings', '--no-playlist', '--skip-download', '-f', 'bestaudio', '-g', url];
+  const args = [
+    '--no-warnings',
+    '--js-runtimes', `deno:${JS_RUNTIME_PATH}`,
+    '--no-playlist',
+    '--skip-download',
+    '-f', 'bestaudio',
+    '-g', url,
+  ];
   const startedAt = Date.now();
   await acquireSlot();
   try {
@@ -147,13 +158,29 @@ async function getVersion() {
 
 async function checkReadiness() {
   const version = await getVersion();
+  const javascriptRuntime = await getJavaScriptRuntime();
   return {
-    ready: version !== 'unavailable',
+    ready: version !== 'unavailable' && javascriptRuntime.available,
     executable: YT_DLP_PATH,
     version,
+    javascriptRuntime,
     timeoutMs: TIMEOUT_MS,
     maxConcurrent: MAX_CONCURRENT,
   };
+}
+
+async function getJavaScriptRuntime() {
+  try {
+    const result = await commandRunner(JS_RUNTIME_PATH, ['--version'], { timeoutMs: 5_000, maxOutputBytes: 16_384 });
+    const version = String(result.stdout || '').trim().split(/\r?\n/)[0];
+    return {
+      executable: JS_RUNTIME_PATH,
+      available: Boolean(version),
+      version: version ? version.slice(0, 64) : 'unavailable',
+    };
+  } catch {
+    return { executable: JS_RUNTIME_PATH, available: false, version: 'unavailable' };
+  }
 }
 
 function __setCommandRunnerForTests(runner) {
@@ -167,6 +194,7 @@ module.exports = {
   resolve,
   getVersion,
   checkReadiness,
+  getJavaScriptRuntime,
   parseSingleHttpUrl,
   classifyFailure,
   __setCommandRunnerForTests,

@@ -16,12 +16,17 @@ test.afterEach(() => {
 
 test('accepts exactly one valid HTTP(S) URL', async () => {
   let commandArgs;
-  __setCommandRunnerForTests(async (_file, args) => {
+  let commandOptions;
+  __setCommandRunnerForTests(async (_file, args, options) => {
     commandArgs = args;
+    commandOptions = options;
     return { stdout: `${validUrl}\n`, stderr: '', exitCode: 0 };
   });
   assert.equal(await resolve('abcdefghijk'), validUrl);
   assert.ok(commandArgs.includes('bestaudio'));
+  assert.ok(commandArgs.includes('--js-runtimes'));
+  assert.ok(commandArgs.some(argument => String(argument).startsWith('deno:')));
+  assert.equal(commandOptions.timeoutMs, 20_000);
   assert.ok(!commandArgs.includes('bestvideo'));
 });
 
@@ -47,6 +52,15 @@ test('maps unavailable and YouTube-blocked stderr without exposing it', async ()
 
   __setCommandRunnerForTests(async () => { throw { stderr: 'Sign in to confirm you are not a bot', exitCode: 1 }; });
   await assert.rejects(resolve('blocked12345'), error => error.kind === 'youtube_blocked' && !error.message.includes('bot'));
+});
+
+test('maps YouTube HTTP 429 to a safe rate-limit response', async () => {
+  __setCommandRunnerForTests(async () => { throw { stderr: 'ERROR: HTTP Error 429: Too Many Requests', exitCode: 1 }; });
+  await assert.rejects(resolve('ratelimit123'), error => (
+    error.kind === 'youtube_rate_limited'
+    && error.status === 429
+    && !error.message.includes('429')
+  ));
 });
 
 test('deduplicates concurrent requests for the same video', async () => {
@@ -76,10 +90,25 @@ test('limits concurrent yt-dlp processes', async () => {
 });
 
 test('readiness reports unavailable yt-dlp separately from liveness', async () => {
-  __setCommandRunnerForTests(async () => { throw { code: 'MISSING_EXECUTABLE', missingExecutable: true }; });
+  __setCommandRunnerForTests(async file => {
+    throw { code: 'MISSING_EXECUTABLE', missingExecutable: true, file };
+  });
   const readiness = await checkReadiness();
   assert.equal(readiness.ready, false);
   assert.equal(readiness.version, 'unavailable');
+  assert.equal(readiness.javascriptRuntime.available, false);
+});
+
+test('readiness includes yt-dlp and JavaScript runtime versions', async () => {
+  __setCommandRunnerForTests(async file => ({
+    stdout: file === 'deno' ? 'deno 2.9.8\n' : '2026.10.26\n',
+    stderr: '',
+    exitCode: 0,
+  }));
+  const readiness = await checkReadiness();
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.version, '2026.10.26');
+  assert.equal(readiness.javascriptRuntime.version, 'deno 2.9.8');
 });
 
 test('GET /ready returns 503 when yt-dlp is unavailable', async () => {
