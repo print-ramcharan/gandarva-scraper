@@ -111,8 +111,8 @@ function releaseSlot() {
 
 async function resolveOnce(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  // BgUtils supplies PO Tokens through yt-dlp's plugin framework. The mweb
-  // client is selected so yt-dlp can request the corresponding GVS token.
+  // Try multiple documented player clients so a client that requires an
+  // unavailable auth flow does not prevent other clients from requesting PO Tokens.
   const extractorArgs = `youtubepot-bgutilhttp:base_url=${POT_PROVIDER_BASE_URL};youtube:player-client=${YOUTUBE_PLAYER_CLIENTS}`;
   const args = [
     '--no-warnings',
