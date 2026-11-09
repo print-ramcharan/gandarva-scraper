@@ -2,11 +2,16 @@ FROM node:24-slim
 
 ARG YT_DLP_VERSION=2026.10.26
 ARG DENO_VERSION=2.9.8
+ARG BGUTIL_VERSION=2.0.2
 ARG TARGETARCH
 
-# Install ffmpeg, Deno, and yt-dlp.
+# Build the BgUtils HTTP token provider and install yt-dlp with its plugin.
+# The provider is bound to loopback only; it is never exposed publicly.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg python3 curl ca-certificates unzip && \
+    apt-get install -y --no-install-recommends \
+      ffmpeg python3 python3-venv git curl ca-certificates unzip \
+      build-essential pkg-config libcairo2-dev libpango1.0-dev \
+      libjpeg-dev libgif-dev librsvg2-dev && \
     case "${TARGETARCH:-amd64}" in \
       amd64) DENO_TARGET="x86_64-unknown-linux-gnu" ;; \
       arm64) DENO_TARGET="aarch64-unknown-linux-gnu" ;; \
@@ -15,18 +20,27 @@ RUN apt-get update && \
     curl -fsSL "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DENO_TARGET}.zip" -o /tmp/deno.zip && \
     unzip -p /tmp/deno.zip deno > /usr/local/bin/deno && \
     chmod a+rx /usr/local/bin/deno && \
-    if [ "$YT_DLP_VERSION" = "latest" ]; then \
-      curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp; \
-    else \
-      curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/download/$YT_DLP_VERSION/yt-dlp" -o /usr/local/bin/yt-dlp; \
-    fi && \
-    chmod a+rx /usr/local/bin/yt-dlp && \
+    python3 -m venv /opt/yt-dlp-venv && \
+    /opt/yt-dlp-venv/bin/pip install --no-cache-dir \
+      "yt-dlp==${YT_DLP_VERSION}" \
+      "bgutil-ytdlp-pot-provider==${BGUTIL_VERSION}" && \
+    git clone --depth 1 --branch "${BGUTIL_VERSION}" \
+      https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+      /opt/bgutil-ytdlp-pot-provider && \
+    cd /opt/bgutil-ytdlp-pot-provider/server && \
+    npm ci && npx tsc && npm prune --omit=dev && \
+    test -f /opt/bgutil-ytdlp-pot-provider/server/build/main.js && \
     /usr/local/bin/deno --version && \
-    /usr/local/bin/yt-dlp --version && \
-    python3 --version && \
-    ffmpeg -version | head -1 && \
+    /opt/yt-dlp-venv/bin/yt-dlp --version && \
     rm -f /tmp/deno.zip && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV YT_DLP_PATH=/opt/yt-dlp-venv/bin/yt-dlp
+ENV YT_DLP_JS_RUNTIME_PATH=/usr/local/bin/deno
+ENV BGUTIL_PROVIDER_ENTRYPOINT=/opt/bgutil-ytdlp-pot-provider/server/build/main.js
+ENV BGUTIL_POT_PROVIDER_URL=http://127.0.0.1:4416
+ENV BGUTIL_POT_PROVIDER_HOST=127.0.0.1
+ENV BGUTIL_POT_PROVIDER_PORT=4416
 
 WORKDIR /app
 

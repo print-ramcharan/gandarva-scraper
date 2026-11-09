@@ -14,7 +14,7 @@ test.afterEach(() => {
   __setCommandRunnerForTests(async () => ({ stdout: validUrl, stderr: '', exitCode: 0 }));
 });
 
-test('accepts exactly one valid HTTP(S) URL', async () => {
+test('uses Deno, BgUtils PO tokens, mweb, and audio-only extraction', async () => {
   let commandArgs;
   let commandOptions;
   __setCommandRunnerForTests(async (_file, args, options) => {
@@ -26,7 +26,11 @@ test('accepts exactly one valid HTTP(S) URL', async () => {
   assert.ok(commandArgs.includes('bestaudio'));
   assert.ok(commandArgs.includes('--js-runtimes'));
   assert.ok(commandArgs.some(argument => String(argument).startsWith('deno:')));
-  assert.equal(commandOptions.timeoutMs, 20_000);
+  const extractorArgsIndex = commandArgs.indexOf('--extractor-args');
+  assert.notEqual(extractorArgsIndex, -1);
+  assert.match(commandArgs[extractorArgsIndex + 1], /youtubepot-bgutilhttp:base_url=/);
+  assert.match(commandArgs[extractorArgsIndex + 1], /youtube:player-client=mweb/);
+  assert.equal(commandOptions.timeoutMs, 30_000);
   assert.ok(!commandArgs.includes('bestvideo'));
 });
 
@@ -109,6 +113,7 @@ test('readiness includes yt-dlp and JavaScript runtime versions', async () => {
   assert.equal(readiness.ready, true);
   assert.equal(readiness.version, '2026.10.26');
   assert.equal(readiness.javascriptRuntime.version, 'deno 2.9.8');
+  assert.equal(readiness.potProvider.configured, false);
 });
 
 test('GET /ready returns 503 when yt-dlp is unavailable', async () => {

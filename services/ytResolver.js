@@ -3,7 +3,10 @@ const logger = require('../utils/logger');
 
 const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
 const JS_RUNTIME_PATH = process.env.YT_DLP_JS_RUNTIME_PATH || 'deno';
-const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 20_000, 1_000, 120_000);
+const POT_PROVIDER_URL = process.env.BGUTIL_POT_PROVIDER_URL || '';
+const POT_PROVIDER_BASE_URL = POT_PROVIDER_URL || 'http://127.0.0.1:4416';
+const YOUTUBE_PLAYER_CLIENTS = process.env.YT_DLP_YOUTUBE_PLAYER_CLIENTS || 'mweb';
+const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 30_000, 1_000, 120_000);
 const MAX_OUTPUT_BYTES = clampInt(process.env.YT_DLP_MAX_OUTPUT_BYTES, 1_048_576, 16_384, 8_388_608);
 const MAX_CONCURRENT = clampInt(process.env.YT_DLP_MAX_CONCURRENT, 2, 1, 8);
 const inFlight = new Map();
@@ -91,11 +94,13 @@ function releaseSlot() {
 
 async function resolveOnce(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  // `bestaudio` deliberately has no video fallback. Returning a video URL
-  // would violate the Android client's audio-only contract.
+  // BgUtils supplies PO Tokens through yt-dlp's plugin framework. The mweb
+  // client is selected so yt-dlp can request the corresponding GVS token.
+  const extractorArgs = `youtubepot-bgutilhttp:base_url=${POT_PROVIDER_BASE_URL};youtube:player-client=${YOUTUBE_PLAYER_CLIENTS}`;
   const args = [
     '--no-warnings',
     '--js-runtimes', `deno:${JS_RUNTIME_PATH}`,
+    '--extractor-args', extractorArgs,
     '--no-playlist',
     '--skip-download',
     '-f', 'bestaudio',
@@ -156,19 +161,6 @@ async function getVersion() {
   }
 }
 
-async function checkReadiness() {
-  const version = await getVersion();
-  const javascriptRuntime = await getJavaScriptRuntime();
-  return {
-    ready: version !== 'unavailable' && javascriptRuntime.available,
-    executable: YT_DLP_PATH,
-    version,
-    javascriptRuntime,
-    timeoutMs: TIMEOUT_MS,
-    maxConcurrent: MAX_CONCURRENT,
-  };
-}
-
 async function getJavaScriptRuntime() {
   try {
     const result = await commandRunner(JS_RUNTIME_PATH, ['--version'], { timeoutMs: 5_000, maxOutputBytes: 16_384 });
@@ -183,6 +175,46 @@ async function getJavaScriptRuntime() {
   }
 }
 
+async function getPotProviderReadiness() {
+  if (!POT_PROVIDER_URL) {
+    return { configured: false, available: false, url: null };
+  }
+  try {
+    const response = await fetch(new URL('/ping', POT_PROVIDER_URL), {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) {
+      return { configured: true, available: false, status: response.status };
+    }
+    const body = await response.json();
+    return {
+      configured: true,
+      available: Boolean(body?.version),
+      version: typeof body?.version === 'string' ? body.version.slice(0, 64) : 'unknown',
+    };
+  } catch {
+    return { configured: true, available: false };
+  }
+}
+
+async function checkReadiness() {
+  const [version, javascriptRuntime, potProvider] = await Promise.all([
+    getVersion(),
+    getJavaScriptRuntime(),
+    getPotProviderReadiness(),
+  ]);
+  const potProviderReady = !potProvider.configured || potProvider.available;
+  return {
+    ready: version !== 'unavailable' && javascriptRuntime.available && potProviderReady,
+    executable: YT_DLP_PATH,
+    version,
+    javascriptRuntime,
+    potProvider,
+    timeoutMs: TIMEOUT_MS,
+    maxConcurrent: MAX_CONCURRENT,
+  };
+}
+
 function __setCommandRunnerForTests(runner) {
   commandRunner = runner;
   inFlight.clear();
@@ -195,6 +227,7 @@ module.exports = {
   getVersion,
   checkReadiness,
   getJavaScriptRuntime,
+  getPotProviderReadiness,
   parseSingleHttpUrl,
   classifyFailure,
   __setCommandRunnerForTests,
