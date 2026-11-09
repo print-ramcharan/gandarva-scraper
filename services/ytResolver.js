@@ -5,7 +5,7 @@ const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
 const JS_RUNTIME_PATH = process.env.YT_DLP_JS_RUNTIME_PATH || 'deno';
 const POT_PROVIDER_URL = process.env.BGUTIL_POT_PROVIDER_URL || '';
 const POT_PROVIDER_BASE_URL = POT_PROVIDER_URL || 'http://127.0.0.1:4416';
-const YOUTUBE_PLAYER_CLIENTS = process.env.YT_DLP_YOUTUBE_PLAYER_CLIENTS || 'mweb';
+const YOUTUBE_PLAYER_CLIENTS = process.env.YT_DLP_YOUTUBE_PLAYER_CLIENTS || 'mweb,tv,web_safari';
 const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 30_000, 1_000, 120_000);
 const MAX_OUTPUT_BYTES = clampInt(process.env.YT_DLP_MAX_OUTPUT_BYTES, 1_048_576, 16_384, 8_388_608);
 const MAX_CONCURRENT = clampInt(process.env.YT_DLP_MAX_CONCURRENT, 2, 1, 8);
@@ -27,6 +27,23 @@ function safeStderr(stderr = '') {
     .map(line => line.trim())
     .filter(Boolean)[0]
     ?.slice(0, 240) || '';
+}
+
+function safePotDiagnostics(stderr = '') {
+  const relevant = String(stderr)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => (
+      /\[pot\] PO Token Providers/i.test(line)
+      || /\[pot:bgutil(?::[^\]]+)?\].*(Generating|Retrieved|Error|provider)/i.test(line)
+      || /Sign in to confirm|confirm you.re not a bot|LOGIN_REQUIRED|HTTP Error 429/i.test(line)
+    ))
+    .map(line => line
+      .replace(/https?:\/\/\S+/gi, '[url]')
+      .replace(/\b(?:PO Token|token|cookie|authorization)\b(?:\s*[:=]\s*)[^\s,;]+/gi, '[credential redacted]')
+      .slice(0, 240))
+    .slice(0, 8);
+  return relevant.join(' | ');
 }
 
 function createResolverError(kind, status, message, details = {}) {
@@ -94,11 +111,12 @@ function releaseSlot() {
 
 async function resolveOnce(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  // BgUtils supplies PO Tokens through yt-dlp's plugin framework. The mweb
-  // client is selected so yt-dlp can request the corresponding GVS token.
+  // Try multiple documented player clients so a client that requires an
+  // unavailable auth flow does not prevent other clients from requesting PO Tokens.
   const extractorArgs = `youtubepot-bgutilhttp:base_url=${POT_PROVIDER_BASE_URL};youtube:player-client=${YOUTUBE_PLAYER_CLIENTS}`;
   const args = [
     '--no-warnings',
+    '--verbose',
     '--js-runtimes', `deno:${JS_RUNTIME_PATH}`,
     '--extractor-args', extractorArgs,
     '--no-playlist',
@@ -121,6 +139,7 @@ async function resolveOnce(videoId) {
         exitCode: error?.exitCode ?? null,
         durationMs: Date.now() - startedAt,
         stderr: safeStderr(error?.stderr),
+        potDiagnostics: safePotDiagnostics(error?.stderr),
       });
       throw classified;
     }

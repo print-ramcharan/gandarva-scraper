@@ -14,7 +14,7 @@ test.afterEach(() => {
   __setCommandRunnerForTests(async () => ({ stdout: validUrl, stderr: '', exitCode: 0 }));
 });
 
-test('uses Deno, BgUtils PO tokens, mweb, and audio-only extraction', async () => {
+test('uses Deno, BgUtils PO tokens, fallback player clients, and audio-only extraction', async () => {
   let commandArgs;
   let commandOptions;
   __setCommandRunnerForTests(async (_file, args, options) => {
@@ -23,13 +23,14 @@ test('uses Deno, BgUtils PO tokens, mweb, and audio-only extraction', async () =
     return { stdout: `${validUrl}\n`, stderr: '', exitCode: 0 };
   });
   assert.equal(await resolve('abcdefghijk'), validUrl);
+  assert.ok(commandArgs.includes('--verbose'));
   assert.ok(commandArgs.includes('bestaudio'));
   assert.ok(commandArgs.includes('--js-runtimes'));
   assert.ok(commandArgs.some(argument => String(argument).startsWith('deno:')));
   const extractorArgsIndex = commandArgs.indexOf('--extractor-args');
   assert.notEqual(extractorArgsIndex, -1);
   assert.match(commandArgs[extractorArgsIndex + 1], /youtubepot-bgutilhttp:base_url=/);
-  assert.match(commandArgs[extractorArgsIndex + 1], /youtube:player-client=mweb/);
+  assert.match(commandArgs[extractorArgsIndex + 1], /youtube:player-client=mweb,tv,web_safari/);
   assert.equal(commandOptions.timeoutMs, 30_000);
   assert.ok(!commandArgs.includes('bestvideo'));
 });
