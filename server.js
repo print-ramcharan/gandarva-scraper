@@ -46,6 +46,10 @@ app.use((err, req, res, _next) => {
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(PORT, () => {
-  logger.info(`Gandharva Resolver listening on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    logger.info(`Gandharva Resolver listening on port ${PORT}`);
+  });
+}
+
+module.exports = app;

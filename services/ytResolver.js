@@ -1,59 +1,173 @@
 const { execWithTimeout } = require('../utils/timeout');
 const logger = require('../utils/logger');
-// const { execSync } = require('child_process');
 
 const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
-const TIMEOUT_MS = 10000;
+const TIMEOUT_MS = clampInt(process.env.YT_DLP_TIMEOUT_MS, 10_000, 1_000, 120_000);
+const MAX_OUTPUT_BYTES = clampInt(process.env.YT_DLP_MAX_OUTPUT_BYTES, 1_048_576, 16_384, 8_388_608);
+const MAX_CONCURRENT = clampInt(process.env.YT_DLP_MAX_CONCURRENT, 2, 1, 8);
+const inFlight = new Map();
+let activeProcesses = 0;
+const waiters = [];
+let commandRunner = execWithTimeout;
 
-console.log('PATH:', process.env.PATH);
+function clampInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
 
-// try {
-//   console.log(
-//     'which yt-dlp:',
-//     execSync('which yt-dlp').toString().trim()
-//   );
-// } catch (e) {
-//   console.error('Cannot locate yt-dlp:', e);
-// }
-async function resolve(videoId) {
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const args = ['-f', 'ba', '-g', '--no-playlist', url];
+function safeStderr(stderr = '') {
+  return String(stderr)
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/([?&](?:key|token|sig|signature|oauth)[^\s]*)/gi, '[redacted]')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)[0]
+    ?.slice(0, 240) || '';
+}
 
-  logger.info('Executing yt-dlp', { videoId });
-  const start = Date.now();
+function createResolverError(kind, status, message, details = {}) {
+  const error = new Error(message);
+  error.kind = kind;
+  error.status = status;
+  Object.assign(error, details);
+  return error;
+}
 
+function classifyFailure(error) {
+  const stderr = String(error?.stderr || '').toLowerCase();
+  if (error?.missingExecutable || error?.code === 'MISSING_EXECUTABLE') {
+    return createResolverError('missing_executable', 503, 'Audio resolver dependency unavailable');
+  }
+  if (error?.timedOut || error?.code === 'TIMEOUT') {
+    return createResolverError('timeout', 504, 'Audio resolution timed out');
+  }
+  if (/video unavailable|private video|has been removed|this video is unavailable|not available in your country/.test(stderr)) {
+    return createResolverError('video_unavailable', 404, 'Video is unavailable');
+  }
+  if (/sign in to confirm|bot|captcha|http error 429|too many requests|confirm you.re not a bot/.test(stderr)) {
+    return createResolverError('youtube_blocked', 502, 'YouTube blocked the resolver request');
+  }
+  if (/timed out|timeout|network|connection|temporary failure|unable to download/.test(stderr)) {
+    return createResolverError('network_failure', 502, 'Resolver network request failed');
+  }
+  return createResolverError('unexpected', 500, 'Audio resolution failed');
+}
+
+function parseSingleHttpUrl(stdout) {
+  const lines = String(stdout || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines.length !== 1) {
+    throw createResolverError('invalid_output', 502, 'Resolver returned invalid output');
+  }
+  let parsed;
   try {
-    const audioUrl = await execWithTimeout(YT_DLP_PATH, args, TIMEOUT_MS);
-    const durationMs = Date.now() - start;
-    logger.info('yt-dlp resolved', { videoId, durationMs });
-    return audioUrl;
-  } catch (err) {
-    const durationMs = Date.now() - start;
+    parsed = new URL(lines[0]);
+  } catch {
+    throw createResolverError('invalid_output', 502, 'Resolver returned invalid output');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw createResolverError('invalid_output', 502, 'Resolver returned invalid output');
+  }
+  return parsed.toString();
+}
 
-    if (err.message === 'TIMEOUT') {
-      logger.error('yt-dlp timeout', { videoId, durationMs });
-      const e = new Error('yt-dlp timed out');
-      e.status = 504;
-      throw e;
+async function acquireSlot() {
+  if (activeProcesses < MAX_CONCURRENT) {
+    activeProcesses += 1;
+    return;
+  }
+  await new Promise(resolve => waiters.push(resolve));
+  activeProcesses += 1;
+}
+
+function releaseSlot() {
+  activeProcesses -= 1;
+  const next = waiters.shift();
+  if (next) next();
+}
+
+async function resolveOnce(videoId) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  // `bestaudio` deliberately has no video fallback. Returning a video URL
+  // would violate the Android client's audio-only contract.
+  const args = ['--no-warnings', '--no-playlist', '--skip-download', '-f', 'bestaudio', '-g', url];
+  const startedAt = Date.now();
+  await acquireSlot();
+  try {
+    logger.info('Executing yt-dlp', { videoId, concurrency: activeProcesses });
+    let result;
+    try {
+      result = await commandRunner(YT_DLP_PATH, args, { timeoutMs: TIMEOUT_MS, maxOutputBytes: MAX_OUTPUT_BYTES });
+    } catch (error) {
+      const classified = classifyFailure(error);
+      logger.error('yt-dlp failed', {
+        videoId,
+        kind: classified.kind,
+        exitCode: error?.exitCode ?? null,
+        durationMs: Date.now() - startedAt,
+        stderr: safeStderr(error?.stderr),
+      });
+      throw classified;
     }
 
-    logger.error('yt-dlp failed', { videoId, durationMs, error: err.message });
-    const e = new Error('Failed to resolve audio URL');
-    e.status = 500;
-    throw e;
+    let audioUrl;
+    try {
+      audioUrl = parseSingleHttpUrl(result.stdout);
+    } catch (error) {
+      logger.error('yt-dlp returned invalid URL output', {
+        videoId,
+        durationMs: Date.now() - startedAt,
+        exitCode: result.exitCode,
+      });
+      throw error;
+    }
+    logger.info('yt-dlp resolved', { videoId, durationMs: Date.now() - startedAt, exitCode: result.exitCode });
+    return audioUrl;
+  } finally {
+    releaseSlot();
   }
 }
 
-/**
- * Get the installed yt-dlp version string.
- * Returns "unavailable" if the binary is missing or broken.
- */
+function resolve(videoId) {
+  const existing = inFlight.get(videoId);
+  if (existing) return existing;
+  const promise = resolveOnce(videoId).finally(() => inFlight.delete(videoId));
+  inFlight.set(videoId, promise);
+  return promise;
+}
+
 async function getVersion() {
   try {
-    return await execWithTimeout(YT_DLP_PATH, ['--version'], 5000);
+    const result = await commandRunner(YT_DLP_PATH, ['--version'], { timeoutMs: 5_000, maxOutputBytes: 16_384 });
+    const version = String(result.stdout || '').trim().split(/\r?\n/);
+    return version.length === 1 && version[0] ? version[0].slice(0, 64) : 'unavailable';
   } catch {
     return 'unavailable';
   }
 }
 
-module.exports = { resolve, getVersion };
+async function checkReadiness() {
+  const version = await getVersion();
+  return {
+    ready: version !== 'unavailable',
+    executable: YT_DLP_PATH,
+    version,
+    timeoutMs: TIMEOUT_MS,
+    maxConcurrent: MAX_CONCURRENT,
+  };
+}
+
+function __setCommandRunnerForTests(runner) {
+  commandRunner = runner;
+  inFlight.clear();
+  activeProcesses = 0;
+  waiters.length = 0;
+}
+
+module.exports = {
+  resolve,
+  getVersion,
+  checkReadiness,
+  parseSingleHttpUrl,
+  classifyFailure,
+  __setCommandRunnerForTests,
+};

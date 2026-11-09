@@ -36,6 +36,9 @@ router.post('/resolve', async (req, res) => {
   // --- Resolve -----------------------------------------------------------
   try {
     const audioUrl = await resolve(videoId);
+    if (typeof audioUrl !== 'string' || !/^https?:\/\/[^\s]+$/i.test(audioUrl)) {
+      return res.status(502).json({ success: false, error: 'Resolver returned an invalid audio URL' });
+    }
     cache.set(videoId, audioUrl);
     return res.json({ success: true, audioUrl, expiresIn: '~10 minutes' });
   } catch (err) {

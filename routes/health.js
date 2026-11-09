@@ -1,6 +1,5 @@
 const express = require('express');
 const cache = require('../services/cache');
-const { getVersion } = require('../services/ytResolver');
 
 const router = express.Router();
 
@@ -11,11 +10,19 @@ const router = express.Router();
  * current cache occupancy.
  */
 router.get('/health', async (_req, res) => {
-  const version = await getVersion();
   res.json({
     status: 'ok',
+    liveness: true,
     uptime: Math.floor(process.uptime()),
-    ytDlp: version,
+    cacheSize: cache.size(),
+  });
+});
+
+router.get('/ready', async (_req, res) => {
+  const readiness = await require('../services/ytResolver').checkReadiness();
+  res.status(readiness.ready ? 200 : 503).json({
+    status: readiness.ready ? 'ready' : 'not_ready',
+    readiness,
     cacheSize: cache.size(),
   });
 });
